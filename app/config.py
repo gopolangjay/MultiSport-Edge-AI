@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "sqlite:///./multisport_edge.db"
     openai_api_key: str | None = None
+    api_sports_key: str | None = None
     min_analytical_confidence: float = 90.0
     target_odds_min: float = 1.45
     target_odds_max: float = 1.60
