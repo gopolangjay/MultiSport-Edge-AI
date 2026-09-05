@@ -6,12 +6,17 @@ This layer is deliberately separate from bookmaker odds and model qualification.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import date
 
 import httpx
 
 BASE = "https://www.thesportsdb.com/api/v1/json/123/eventsday.php"
 SPORTS = ("Soccer", "Tennis", "Basketball", "Rugby", "Cricket", "Ice_Hockey", "Baseball", "Volleyball", "Handball")
+CACHE_TTL_SECONDS = 300
+STALE_TTL_SECONDS = 21600
+_CACHE: dict[str, tuple[float, dict]] = {}
+_CACHE_LOCK = asyncio.Lock()
 
 
 def _normalise(event: dict) -> dict:
@@ -54,11 +59,15 @@ async def _sport_day(client: httpx.AsyncClient, target: date, sport: str) -> tup
         return sport, [], str(exc)[:160]
 
 
-async def events_for_day(target: date) -> dict:
+async def _fetch_day(target: date) -> dict:
     timeout = httpx.Timeout(15.0, connect=8.0)
-    headers = {"User-Agent": "MultiSportEdgeAI/2.0"}
+    headers = {"User-Agent": "MultiSportEdgeAI/2.1"}
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
-        chunks = await asyncio.gather(*(_sport_day(client, target, sport) for sport in SPORTS))
+        # Keep provider pressure low: the free API is sensitive to bursts.
+        chunks = []
+        for sport in SPORTS:
+            chunks.append(await _sport_day(client, target, sport))
+            await asyncio.sleep(0.12)
     events: list[dict] = []
     sources: dict[str, dict] = {}
     for sport, rows, error in chunks:
@@ -72,5 +81,30 @@ async def events_for_day(target: date) -> dict:
         "events": events,
         "sources": sources,
         "provider": "TheSportsDB documented V1 API",
+        "cache": "fresh",
         "note": "Fixture/result discovery only. Bookmaker odds and >=90 model qualification remain separate.",
     }
+
+
+async def events_for_day(target: date) -> dict:
+    key = target.isoformat()
+    now = time.monotonic()
+    cached = _CACHE.get(key)
+    if cached and now - cached[0] < CACHE_TTL_SECONDS:
+        return {**cached[1], "cache": "hit"}
+
+    async with _CACHE_LOCK:
+        now = time.monotonic()
+        cached = _CACHE.get(key)
+        if cached and now - cached[0] < CACHE_TTL_SECONDS:
+            return {**cached[1], "cache": "hit"}
+
+        fresh = await _fetch_day(target)
+        if fresh["events"]:
+            _CACHE[key] = (time.monotonic(), fresh)
+            return fresh
+
+        # A transient upstream empty response must not erase a recently good schedule.
+        if cached and now - cached[0] < STALE_TTL_SECONDS and cached[1].get("events"):
+            return {**cached[1], "cache": "stale-if-empty", "upstream_empty": True}
+        return fresh
