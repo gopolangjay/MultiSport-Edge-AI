@@ -5,17 +5,22 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from app import __version__
 from app.domain import Portfolio, PortfolioRequest
 from app.optimizer import optimize_portfolio
 from app.providers.api_sports import APISportsProvider
 from app.web_intelligence import fallback_status
+from app.web_pipeline import build_web_portfolio, qualify_records
 
 BASE_DIR = Path(__file__).resolve().parent
 SAST = ZoneInfo("Africa/Johannesburg")
 app = FastAPI(title="MultiSport Edge AI", version=__version__)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+
+class WebBatch(BaseModel):
+    records: list[dict] = Field(default_factory=list, max_length=500)
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard() -> HTMLResponse:
@@ -42,6 +47,14 @@ async def api_sports_status() -> dict:
 @app.get("/v1/providers/web-intelligence/status")
 def web_intelligence_status() -> dict:
     return fallback_status()
+
+@app.post("/v1/web-intelligence/qualify")
+def web_intelligence_qualify(batch: WebBatch) -> dict:
+    return qualify_records(batch.records)
+
+@app.post("/v1/web-intelligence/portfolio")
+def web_intelligence_portfolio(batch: WebBatch) -> dict:
+    return build_web_portfolio(batch.records)
 
 @app.get("/v1/football/fixtures")
 async def football_fixtures(on: str | None = None) -> dict:
