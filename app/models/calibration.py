@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from math import log
 
-
 EPSILON = 1e-12
 
 
@@ -13,7 +12,9 @@ class CalibrationReport:
     expected_calibration_error: float
 
 
-def evaluate_calibration(probabilities: list[float], outcomes: list[int], bins: int = 10) -> CalibrationReport:
+def evaluate_calibration(
+    probabilities: list[float], outcomes: list[int], bins: int = 10
+) -> CalibrationReport:
     if len(probabilities) != len(outcomes) or not probabilities:
         raise ValueError("probabilities and outcomes must be non-empty and equal length")
     if any(not 0 <= p <= 1 for p in probabilities):
@@ -32,7 +33,8 @@ def evaluate_calibration(probabilities: list[float], outcomes: list[int], bins: 
     for i in range(bins):
         low, high = i / bins, (i + 1) / bins
         members = [
-            (p, y) for p, y in zip(probabilities, outcomes, strict=True)
+            (p, y)
+            for p, y in zip(probabilities, outcomes, strict=True)
             if low <= p < high or (i == bins - 1 and p == 1.0)
         ]
         if not members:
