@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app import __version__
+from app.autonomous_research import run_research
 from app.domain import Portfolio, PortfolioRequest
 from app.optimizer import optimize_portfolio
 from app.providers.api_sports import APISportsProvider
@@ -39,6 +40,8 @@ def safe_error(exc: Exception) -> str:
     text=str(exc)
     if "API_SPORTS_KEY" in text and "configured" not in text:
         return "API-Sports authentication configuration error"
+    if "OPENAI_API_KEY" in text and "configured" not in text:
+        return "OpenAI authentication configuration error"
     return text[:300] or exc.__class__.__name__
 
 @app.get("/v1/providers/api-sports/status")
@@ -52,8 +55,15 @@ async def api_sports_status() -> dict:
 @app.get("/v1/providers/web-intelligence/status")
 def web_intelligence_status() -> dict:
     status = fallback_status()
-    status["research_worker"] = "ready"
+    status["research_worker"] = "autonomous"
     return status
+
+@app.post("/v1/research-worker/run")
+def research_worker_run() -> dict:
+    try:
+        return run_research()
+    except Exception as exc:
+        return {"ok":False,"error":safe_error(exc)}
 
 @app.post("/v1/research-worker/feed")
 def research_worker_feed(batch: ResearchBatch) -> dict:
