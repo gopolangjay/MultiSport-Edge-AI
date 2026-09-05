@@ -10,6 +10,7 @@ from app import __version__
 from app.domain import Portfolio, PortfolioRequest
 from app.optimizer import optimize_portfolio
 from app.providers.api_sports import APISportsProvider
+from app.web_intelligence import fallback_status
 
 BASE_DIR = Path(__file__).resolve().parent
 SAST = ZoneInfo("Africa/Johannesburg")
@@ -36,7 +37,11 @@ async def api_sports_status() -> dict:
         payload=await APISportsProvider().status()
         return {"ok":True,"provider":"API-Sports","payload":payload}
     except Exception as exc:
-        return {"ok":False,"provider":"API-Sports","error":safe_error(exc)}
+        return {"ok":False,"provider":"API-Sports","error":safe_error(exc),"fallback":"web-intelligence"}
+
+@app.get("/v1/providers/web-intelligence/status")
+def web_intelligence_status() -> dict:
+    return fallback_status()
 
 @app.get("/v1/football/fixtures")
 async def football_fixtures(on: str | None = None) -> dict:
@@ -46,9 +51,9 @@ async def football_fixtures(on: str | None = None) -> dict:
         raise HTTPException(status_code=400,detail="Use YYYY-MM-DD") from exc
     try:
         fixtures=await APISportsProvider().football_fixtures(target_date)
-        return {"ok":True,"date":target_date.isoformat(),"count":len(fixtures),"fixtures":fixtures}
+        return {"ok":True,"date":target_date.isoformat(),"count":len(fixtures),"fixtures":fixtures,"source":"api-sports"}
     except Exception as exc:
-        return {"ok":False,"date":target_date.isoformat(),"count":0,"fixtures":[],"error":safe_error(exc)}
+        return {"ok":False,"date":target_date.isoformat(),"count":0,"fixtures":[],"error":safe_error(exc),"fallback":"web-intelligence"}
 
 @app.get("/v1/football/fixtures/{fixture_id}/odds")
 async def football_odds(fixture_id: int) -> dict:
@@ -56,7 +61,7 @@ async def football_odds(fixture_id: int) -> dict:
         odds=await APISportsProvider().football_odds(fixture_id)
         return {"ok":True,"fixture_id":fixture_id,"odds":odds}
     except Exception as exc:
-        return {"ok":False,"fixture_id":fixture_id,"odds":[],"error":safe_error(exc)}
+        return {"ok":False,"fixture_id":fixture_id,"odds":[],"error":safe_error(exc),"fallback":"web-intelligence"}
 
 @app.get("/v1/football/fixtures/{fixture_id}/predictions")
 async def football_predictions(fixture_id: int) -> dict:
@@ -64,7 +69,7 @@ async def football_predictions(fixture_id: int) -> dict:
         predictions=await APISportsProvider().football_predictions(fixture_id)
         return {"ok":True,"fixture_id":fixture_id,"predictions":predictions}
     except Exception as exc:
-        return {"ok":False,"fixture_id":fixture_id,"predictions":[],"error":safe_error(exc)}
+        return {"ok":False,"fixture_id":fixture_id,"predictions":[],"error":safe_error(exc),"fallback":"web-intelligence"}
 
 @app.post("/v1/portfolios/build", response_model=Portfolio)
 def create_portfolio(request: PortfolioRequest) -> Portfolio:
