@@ -1,16 +1,18 @@
 """Web-intelligence fallback layer.
 
 This module deliberately keeps web-discovered market data separate from API provider data.
-It never fabricates odds or confidence.  Records must carry source URLs/timestamps and
+It never fabricates odds or confidence. Records must carry source URLs/timestamps and
 can only progress to qualification after independent evidence/scoring is available.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 SAST = ZoneInfo("Africa/Johannesburg")
+
 
 @dataclass(frozen=True)
 class WebMarketRecord:
