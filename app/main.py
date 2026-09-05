@@ -11,6 +11,7 @@ from app import __version__
 from app.domain import Portfolio, PortfolioRequest
 from app.optimizer import optimize_portfolio
 from app.providers.api_sports import APISportsProvider
+from app.research_worker import prepare_batch
 from app.web_intelligence import fallback_status
 from app.web_pipeline import build_web_portfolio, qualify_records
 from app.web_scan import ingest as ingest_web_records, snapshot as web_scan_snapshot
@@ -22,6 +23,9 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 class WebBatch(BaseModel):
     records: list[dict] = Field(default_factory=list, max_length=500)
+
+class ResearchBatch(BaseModel):
+    observations: list[dict] = Field(default_factory=list, max_length=500)
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard() -> HTMLResponse:
@@ -47,7 +51,16 @@ async def api_sports_status() -> dict:
 
 @app.get("/v1/providers/web-intelligence/status")
 def web_intelligence_status() -> dict:
-    return fallback_status()
+    status = fallback_status()
+    status["research_worker"] = "ready"
+    return status
+
+@app.post("/v1/research-worker/feed")
+def research_worker_feed(batch: ResearchBatch) -> dict:
+    prepared = prepare_batch(batch.observations)
+    ingestion = ingest_web_records(prepared["records"])
+    scan = web_scan_snapshot()
+    return {"ok": True, "prepared": prepared, "ingestion": ingestion, "scan": scan}
 
 @app.post("/v1/web-intelligence/ingest")
 def web_intelligence_ingest(batch: WebBatch) -> dict:
