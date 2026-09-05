@@ -1,11 +1,13 @@
 """Web-intelligence scan orchestration backed by persistent storage."""
+
 from __future__ import annotations
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.web_pipeline import build_web_portfolio, qualify_records
-from app.web_store import ingest as store_ingest, records as stored_records
+from app.web_store import ingest as store_ingest
+from app.web_store import records as stored_records
 
 SAST = ZoneInfo("Africa/Johannesburg")
 
@@ -28,5 +30,8 @@ def snapshot() -> dict:
         "records": rows[:100],
         "generated_at": now.isoformat(),
         "freshness_window_minutes": 120,
-        "note": "Only sourced observations are scanned; stale observations are removed and no missing odds or confidence values are fabricated.",
+        "note": (
+            "Only sourced observations are scanned; stale observations are removed and no "
+            "missing odds or confidence values are fabricated."
+        ),
     }
