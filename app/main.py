@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -16,33 +16,50 @@ from app.research_worker import prepare_batch
 from app.sports_data import events_for_day
 from app.web_intelligence import fallback_status
 from app.web_pipeline import build_web_portfolio, qualify_records
-from app.web_scan import ingest as ingest_web_records, snapshot as web_scan_snapshot
+from app.web_scan import ingest as ingest_web_records
+from app.web_scan import snapshot as web_scan_snapshot
 
 BASE_DIR = Path(__file__).resolve().parent
 SAST = ZoneInfo("Africa/Johannesburg")
 app = FastAPI(title="MultiSport Edge AI", version=__version__)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
+
 class WebBatch(BaseModel):
     records: list[dict] = Field(default_factory=list, max_length=500)
+
 
 class ResearchBatch(BaseModel):
     observations: list[dict] = Field(default_factory=list, max_length=500)
 
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard() -> HTMLResponse:
-    return HTMLResponse((BASE_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8"), headers={"Cache-Control":"no-store, max-age=0"})
+    return HTMLResponse(
+        (BASE_DIR / "templates" / "dashboard.html").read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
 
 @app.get("/health")
 def health() -> dict:
     scan = web_scan_snapshot()
-    return {"status":"ok","version":__version__,"service":"multisport-edge-ai","time_sast":datetime.now(SAST).isoformat(),"stored_observations":scan["observed_records"],"qualified":scan["qualified_records"]}
+    return {
+        "status": "ok",
+        "version": __version__,
+        "service": "multisport-edge-ai",
+        "time_sast": datetime.now(SAST).isoformat(),
+        "stored_observations": scan["observed_records"],
+        "qualified": scan["qualified_records"],
+    }
+
 
 def safe_error(exc: Exception) -> str:
-    text=str(exc)
+    text = str(exc)
     if "API_SPORTS_KEY" in text and "configured" not in text:
         return "API-Sports authentication configuration error"
     return text[:300] or exc.__class__.__name__
+
 
 @app.get("/v1/system/status")
 async def system_status() -> dict:
@@ -52,92 +69,167 @@ async def system_status() -> dict:
     return {
         "ok": True,
         "time_sast": now.isoformat(),
-        "workflow": ["events", "bookmaker_odds", "evidence", "qualification", "portfolio", "settlement"],
-        "events_provider": {"name": fixtures["provider"], "ok": fixtures["ok"], "events": fixtures["count"]},
-        "bookmaker_collector": {"name": "Sportingbet/Betway public pages", "observations": scan["observed_records"]},
+        "workflow": [
+            "events",
+            "bookmaker_odds",
+            "evidence",
+            "qualification",
+            "portfolio",
+            "settlement",
+        ],
+        "events_provider": {
+            "name": fixtures["provider"],
+            "ok": fixtures["ok"],
+            "events": fixtures["count"],
+        },
+        "bookmaker_collector": {
+            "name": "Sportingbet/Betway public pages",
+            "observations": scan["observed_records"],
+        },
         "model_gate": {"threshold": 90, "qualified": scan["qualified_records"]},
         "portfolio": scan["portfolio"],
         "degraded": scan["observed_records"] == 0,
-        "degraded_reason": "Bookmaker pages are JavaScript-rendered; no verified odds observations are currently stored." if scan["observed_records"] == 0 else None,
+        "degraded_reason": (
+            "Bookmaker pages are JavaScript-rendered; no verified odds observations "
+            "are currently stored."
+            if scan["observed_records"] == 0
+            else None
+        ),
     }
+
 
 @app.get("/v1/events/today")
 async def events_today() -> dict:
     return await events_for_day(datetime.now(SAST).date())
 
+
 @app.get("/v1/events/{on}")
 async def events_on(on: str) -> dict:
     try:
-        target=datetime.strptime(on,"%Y-%m-%d").date()
+        target = date.fromisoformat(on)
     except ValueError as exc:
-        raise HTTPException(status_code=400,detail="Use YYYY-MM-DD") from exc
+        raise HTTPException(status_code=400, detail="Use YYYY-MM-DD") from exc
     return await events_for_day(target)
+
 
 @app.get("/v1/providers/api-sports/status")
 async def api_sports_status() -> dict:
     try:
-        payload=await APISportsProvider().status()
-        return {"ok":True,"provider":"API-Sports","payload":payload}
-    except Exception as exc:
-        return {"ok":False,"provider":"API-Sports","error":safe_error(exc),"fallback":"TheSportsDB+public-market-collector"}
+        payload = await APISportsProvider().status()
+        return {"ok": True, "provider": "API-Sports", "payload": payload}
+    except Exception as exc:  # provider failures are intentionally degraded to fallback status
+        return {
+            "ok": False,
+            "provider": "API-Sports",
+            "error": safe_error(exc),
+            "fallback": "TheSportsDB+public-market-collector",
+        }
+
 
 @app.get("/v1/providers/web-intelligence/status")
 def web_intelligence_status() -> dict:
     status = fallback_status()
     status["research_worker"] = "public-market-collector+verified-research"
     status["requires_openai_api_key"] = False
-    status["mode"] = "Events -> verified bookmaker odds -> evidence -> >=90 qualification -> portfolio -> settlement"
+    status["mode"] = (
+        "Events -> verified bookmaker odds -> evidence -> >=90 qualification -> "
+        "portfolio -> settlement"
+    )
     return status
+
 
 @app.post("/v1/research-worker/feed")
 def research_worker_feed(batch: ResearchBatch) -> dict:
     prepared = prepare_batch(batch.observations)
     ingestion = ingest_web_records(prepared["records"])
-    return {"ok": True, "source": "verified-research-feed", "prepared": prepared, "ingestion": ingestion, "scan": web_scan_snapshot()}
+    return {
+        "ok": True,
+        "source": "verified-research-feed",
+        "prepared": prepared,
+        "ingestion": ingestion,
+        "scan": web_scan_snapshot(),
+    }
+
+
+async def _collector_response() -> dict:
+    collection = await collect_public_markets()
+    return {
+        "ok": True,
+        "collection": collection,
+        "scan": web_scan_snapshot(),
+        "events": await events_for_day(datetime.now(SAST).date()),
+    }
+
 
 @app.post("/v1/market-collector/run")
 async def market_collector_run() -> dict:
-    collection = await collect_public_markets()
-    return {"ok": True, "collection": collection, "scan": web_scan_snapshot(), "events": await events_for_day(datetime.now(SAST).date())}
+    return await _collector_response()
+
 
 @app.get("/v1/market-collector/run")
 async def market_collector_run_get() -> dict:
-    collection = await collect_public_markets()
-    return {"ok": True, "collection": collection, "scan": web_scan_snapshot(), "events": await events_for_day(datetime.now(SAST).date())}
+    return await _collector_response()
+
 
 @app.post("/v1/web-intelligence/ingest")
 def web_intelligence_ingest(batch: WebBatch) -> dict:
     return ingest_web_records(batch.records)
 
+
 @app.get("/v1/web-intelligence/scan")
 def web_intelligence_scan() -> dict:
     return web_scan_snapshot()
+
 
 @app.post("/v1/web-intelligence/qualify")
 def web_intelligence_qualify(batch: WebBatch) -> dict:
     return qualify_records(batch.records)
 
+
 @app.post("/v1/web-intelligence/portfolio")
 def web_intelligence_portfolio(batch: WebBatch) -> dict:
     return build_web_portfolio(batch.records)
 
+
 @app.get("/v1/football/fixtures")
 async def football_fixtures(on: str | None = None) -> dict:
     try:
-        target_date=datetime.strptime(on,"%Y-%m-%d").date() if on else datetime.now(SAST).date()
+        target_date = date.fromisoformat(on) if on else datetime.now(SAST).date()
     except ValueError as exc:
-        raise HTTPException(status_code=400,detail="Use YYYY-MM-DD") from exc
+        raise HTTPException(status_code=400, detail="Use YYYY-MM-DD") from exc
     data = await events_for_day(target_date)
-    fixtures=[x for x in data["events"] if x["sport"].lower() in {"soccer","football"}]
-    return {"ok":data["ok"],"date":target_date.isoformat(),"count":len(fixtures),"fixtures":fixtures,"source":"TheSportsDB"}
+    fixtures = [
+        x for x in data["events"] if x["sport"].lower() in {"soccer", "football"}
+    ]
+    return {
+        "ok": data["ok"],
+        "date": target_date.isoformat(),
+        "count": len(fixtures),
+        "fixtures": fixtures,
+        "source": "TheSportsDB",
+    }
+
 
 @app.get("/v1/football/fixtures/{fixture_id}/odds")
 async def football_odds(fixture_id: int) -> dict:
-    return {"ok":False,"fixture_id":fixture_id,"odds":[],"error":"No verified bookmaker odds provider is connected for this fixture. Odds are never fabricated."}
+    return {
+        "ok": False,
+        "fixture_id": fixture_id,
+        "odds": [],
+        "error": "No verified bookmaker odds provider is connected for this fixture. "
+        "Odds are never fabricated.",
+    }
+
 
 @app.get("/v1/football/fixtures/{fixture_id}/predictions")
 async def football_predictions(fixture_id: int) -> dict:
-    return {"ok":False,"fixture_id":fixture_id,"predictions":[],"error":"Prediction requires verified odds plus independent evidence."}
+    return {
+        "ok": False,
+        "fixture_id": fixture_id,
+        "predictions": [],
+        "error": "Prediction requires verified odds plus independent evidence.",
+    }
+
 
 @app.post("/v1/portfolios/build", response_model=Portfolio)
 def create_portfolio(request: PortfolioRequest) -> Portfolio:
