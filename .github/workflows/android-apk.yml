@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main, repair/bookmaker-slots]
+    branches: [main, repair/android-production-api]
     paths:
       - 'android/**'
       - '.github/workflows/android-apk.yml'
@@ -28,6 +28,36 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Verify production API from Android hostname
+        working-directory: .
+        run: |
+          python - <<'PY'
+          import json, time, urllib.request
+          base = 'https://multisport-edge-ai.onrender.com'
+          paths = ['/health','/v1/events/today','/v1/system/status','/v1/web-intelligence/scan','/v1/market-collector/run']
+          payloads = {}
+          for path in paths:
+              for attempt in range(4):
+                  try:
+                      req = urllib.request.Request(base + path, headers={'Accept':'application/json','User-Agent':'MultiSport-Android-CI/2'})
+                      with urllib.request.urlopen(req, timeout=60) as response:
+                          if response.status != 200: raise RuntimeError(f'{path}: HTTP {response.status}')
+                          payloads[path] = json.loads(response.read().decode())
+                          print(path, 'OK')
+                          break
+                  except Exception:
+                      if attempt == 3: raise
+                      time.sleep(8 * (attempt + 1))
+          events = payloads['/v1/events/today'].get('events') or []
+          if not events: raise SystemExit('REJECT APK: production events endpoint returned zero events')
+          logo_events = [e for e in events if e.get('home_logo') or e.get('away_logo')]
+          if not logo_events: raise SystemExit('REJECT APK: no production event contains a real team-logo URL')
+          for e in logo_events[:3]:
+              for key in ('home_logo','away_logo'):
+                  url=e.get(key)
+                  if url and not url.startswith('https://'): raise SystemExit(f'REJECT APK: non-HTTPS logo URL: {url}')
+          print(f'Production acceptance: {len(events)} events; {len(logo_events)} with team logos')
+          PY
       - name: Build installable signed debug APK
         run: gradle clean assembleDebug --no-daemon
       - name: Locate Android build tools
@@ -40,6 +70,9 @@ jobs:
           "$BUILD_TOOLS/aapt" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='za.co.multisportedge'" /tmp/badging.txt
           grep -q "sdkVersion:'24'" /tmp/badging.txt
+          unzip -p "$APK" assets/v2-shell.html > /tmp/v2-shell.html
+          grep -q 'home_logo' /tmp/v2-shell.html
+          grep -q 'away_logo' /tmp/v2-shell.html
           sha256sum "$APK" | tee app/build/outputs/apk/debug/app-debug.apk.sha256
           unzip -t "$APK"
       - uses: actions/upload-artifact@v4
