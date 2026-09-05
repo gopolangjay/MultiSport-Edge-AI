@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app import __version__
 from app.domain import Portfolio, PortfolioRequest
+from app.market_collector import collect_public_markets
 from app.optimizer import optimize_portfolio
 from app.providers.api_sports import APISportsProvider
 from app.research_worker import prepare_batch
@@ -47,14 +48,14 @@ async def api_sports_status() -> dict:
         payload=await APISportsProvider().status()
         return {"ok":True,"provider":"API-Sports","payload":payload}
     except Exception as exc:
-        return {"ok":False,"provider":"API-Sports","error":safe_error(exc),"fallback":"chatgpt-research-feed"}
+        return {"ok":False,"provider":"API-Sports","error":safe_error(exc),"fallback":"public-market-collector"}
 
 @app.get("/v1/providers/web-intelligence/status")
 def web_intelligence_status() -> dict:
     status = fallback_status()
-    status["research_worker"] = "chatgpt-feed"
+    status["research_worker"] = "public-market-collector+chatgpt-feed"
     status["requires_openai_api_key"] = False
-    status["mode"] = "ChatGPT research feed + backend qualification"
+    status["mode"] = "Autonomous public market collection + ChatGPT research + backend qualification"
     return status
 
 @app.post("/v1/research-worker/feed")
@@ -63,6 +64,17 @@ def research_worker_feed(batch: ResearchBatch) -> dict:
     ingestion = ingest_web_records(prepared["records"])
     scan = web_scan_snapshot()
     return {"ok": True, "source": "chatgpt-research-feed", "prepared": prepared, "ingestion": ingestion, "scan": scan}
+
+@app.post("/v1/market-collector/run")
+async def market_collector_run() -> dict:
+    collection = await collect_public_markets()
+    return {"ok": True, "collection": collection, "scan": web_scan_snapshot()}
+
+@app.get("/v1/market-collector/run")
+async def market_collector_run_get() -> dict:
+    """Refresh-button friendly collector endpoint; GET performs a fresh public-market scan."""
+    collection = await collect_public_markets()
+    return {"ok": True, "collection": collection, "scan": web_scan_snapshot()}
 
 @app.post("/v1/web-intelligence/ingest")
 def web_intelligence_ingest(batch: WebBatch) -> dict:
@@ -90,7 +102,7 @@ async def football_fixtures(on: str | None = None) -> dict:
         fixtures=await APISportsProvider().football_fixtures(target_date)
         return {"ok":True,"date":target_date.isoformat(),"count":len(fixtures),"fixtures":fixtures,"source":"api-sports"}
     except Exception as exc:
-        return {"ok":False,"date":target_date.isoformat(),"count":0,"fixtures":[],"error":safe_error(exc),"fallback":"chatgpt-research-feed"}
+        return {"ok":False,"date":target_date.isoformat(),"count":0,"fixtures":[],"error":safe_error(exc),"fallback":"public-market-collector"}
 
 @app.get("/v1/football/fixtures/{fixture_id}/odds")
 async def football_odds(fixture_id: int) -> dict:
@@ -98,7 +110,7 @@ async def football_odds(fixture_id: int) -> dict:
         odds=await APISportsProvider().football_odds(fixture_id)
         return {"ok":True,"fixture_id":fixture_id,"odds":odds}
     except Exception as exc:
-        return {"ok":False,"fixture_id":fixture_id,"odds":[],"error":safe_error(exc),"fallback":"chatgpt-research-feed"}
+        return {"ok":False,"fixture_id":fixture_id,"odds":[],"error":safe_error(exc),"fallback":"public-market-collector"}
 
 @app.get("/v1/football/fixtures/{fixture_id}/predictions")
 async def football_predictions(fixture_id: int) -> dict:
