@@ -8,7 +8,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app import __version__
-from app.autonomous_research import run_research
 from app.domain import Portfolio, PortfolioRequest
 from app.optimizer import optimize_portfolio
 from app.providers.api_sports import APISportsProvider
@@ -40,8 +39,6 @@ def safe_error(exc: Exception) -> str:
     text=str(exc)
     if "API_SPORTS_KEY" in text and "configured" not in text:
         return "API-Sports authentication configuration error"
-    if "OPENAI_API_KEY" in text and "configured" not in text:
-        return "OpenAI authentication configuration error"
     return text[:300] or exc.__class__.__name__
 
 @app.get("/v1/providers/api-sports/status")
@@ -50,27 +47,22 @@ async def api_sports_status() -> dict:
         payload=await APISportsProvider().status()
         return {"ok":True,"provider":"API-Sports","payload":payload}
     except Exception as exc:
-        return {"ok":False,"provider":"API-Sports","error":safe_error(exc),"fallback":"web-intelligence"}
+        return {"ok":False,"provider":"API-Sports","error":safe_error(exc),"fallback":"chatgpt-research-feed"}
 
 @app.get("/v1/providers/web-intelligence/status")
 def web_intelligence_status() -> dict:
     status = fallback_status()
-    status["research_worker"] = "autonomous"
+    status["research_worker"] = "chatgpt-feed"
+    status["requires_openai_api_key"] = False
+    status["mode"] = "ChatGPT research feed + backend qualification"
     return status
-
-@app.post("/v1/research-worker/run")
-def research_worker_run() -> dict:
-    try:
-        return run_research()
-    except Exception as exc:
-        return {"ok":False,"error":safe_error(exc)}
 
 @app.post("/v1/research-worker/feed")
 def research_worker_feed(batch: ResearchBatch) -> dict:
     prepared = prepare_batch(batch.observations)
     ingestion = ingest_web_records(prepared["records"])
     scan = web_scan_snapshot()
-    return {"ok": True, "prepared": prepared, "ingestion": ingestion, "scan": scan}
+    return {"ok": True, "source": "chatgpt-research-feed", "prepared": prepared, "ingestion": ingestion, "scan": scan}
 
 @app.post("/v1/web-intelligence/ingest")
 def web_intelligence_ingest(batch: WebBatch) -> dict:
@@ -98,7 +90,7 @@ async def football_fixtures(on: str | None = None) -> dict:
         fixtures=await APISportsProvider().football_fixtures(target_date)
         return {"ok":True,"date":target_date.isoformat(),"count":len(fixtures),"fixtures":fixtures,"source":"api-sports"}
     except Exception as exc:
-        return {"ok":False,"date":target_date.isoformat(),"count":0,"fixtures":[],"error":safe_error(exc),"fallback":"web-intelligence"}
+        return {"ok":False,"date":target_date.isoformat(),"count":0,"fixtures":[],"error":safe_error(exc),"fallback":"chatgpt-research-feed"}
 
 @app.get("/v1/football/fixtures/{fixture_id}/odds")
 async def football_odds(fixture_id: int) -> dict:
@@ -106,7 +98,7 @@ async def football_odds(fixture_id: int) -> dict:
         odds=await APISportsProvider().football_odds(fixture_id)
         return {"ok":True,"fixture_id":fixture_id,"odds":odds}
     except Exception as exc:
-        return {"ok":False,"fixture_id":fixture_id,"odds":[],"error":safe_error(exc),"fallback":"web-intelligence"}
+        return {"ok":False,"fixture_id":fixture_id,"odds":[],"error":safe_error(exc),"fallback":"chatgpt-research-feed"}
 
 @app.get("/v1/football/fixtures/{fixture_id}/predictions")
 async def football_predictions(fixture_id: int) -> dict:
@@ -114,7 +106,7 @@ async def football_predictions(fixture_id: int) -> dict:
         predictions=await APISportsProvider().football_predictions(fixture_id)
         return {"ok":True,"fixture_id":fixture_id,"predictions":predictions}
     except Exception as exc:
-        return {"ok":False,"fixture_id":fixture_id,"predictions":[],"error":safe_error(exc),"fallback":"web-intelligence"}
+        return {"ok":False,"fixture_id":fixture_id,"predictions":[],"error":safe_error(exc),"fallback":"chatgpt-research-feed"}
 
 @app.post("/v1/portfolios/build", response_model=Portfolio)
 def create_portfolio(request: PortfolioRequest) -> Portfolio:
