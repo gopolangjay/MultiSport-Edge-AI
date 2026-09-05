@@ -2,6 +2,11 @@ name: Build Android APK
 
 on:
   push:
+    branches: [main, repair/bookmaker-slots]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-apk.yml'
+  pull_request:
     branches: [main]
     paths:
       - 'android/**'
@@ -24,11 +29,23 @@ jobs:
         with:
           gradle-version: '8.9'
       - name: Build installable signed debug APK
-        run: gradle assembleDebug --no-daemon
-      - name: Verify APK exists
-        run: test -f app/build/outputs/apk/debug/app-debug.apk
+        run: gradle clean assembleDebug --no-daemon
+      - name: Locate Android build tools
+        run: echo "BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)" >> $GITHUB_ENV
+      - name: Validate APK
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          "$BUILD_TOOLS/aapt" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='za.co.multisportedge'" /tmp/badging.txt
+          grep -q "sdkVersion:'24'" /tmp/badging.txt
+          sha256sum "$APK" | tee app/build/outputs/apk/debug/app-debug.apk.sha256
+          unzip -t "$APK"
       - uses: actions/upload-artifact@v4
         with:
-          name: MultiSport-Edge-AI-Android
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: MultiSport-Edge-AI-Android-V2
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/debug/app-debug.apk.sha256
           if-no-files-found: error
