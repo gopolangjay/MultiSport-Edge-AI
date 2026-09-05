@@ -5,8 +5,6 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
-import android.view.Window;
-import android.view.WindowManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -18,51 +16,30 @@ public class MainActivity extends Activity {
     private static final String APP_URL = "https://multisport-edge-ai.onrender.com/";
     private static final String APP_HOST = "multisport-edge-ai.onrender.com";
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Window window = getWindow();
-        window.setStatusBarColor(Color.rgb(8,13,18));
-        window.setNavigationBarColor(Color.rgb(8,13,18));
-        window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
-
+        getWindow().setStatusBarColor(Color.rgb(4,16,20));
+        getWindow().setNavigationBarColor(Color.rgb(4,16,20));
         webView = new WebView(this);
-        webView.setBackgroundColor(Color.rgb(8,13,18));
+        webView.setBackgroundColor(Color.rgb(4,16,20));
         setContentView(webView);
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setLoadWithOverviewMode(true);
-        settings.setUseWideViewPort(true);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        WebSettings s = webView.getSettings();
+        s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true); s.setDatabaseEnabled(true);
+        s.setLoadWithOverviewMode(true); s.setUseWideViewPort(true);
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                Uri uri = request.getUrl();
-                String host = uri.getHost();
-                if (host != null && (host.equals(APP_HOST) || host.endsWith(".onrender.com"))) return false;
-                try {
-                    startActivity(new Intent(Intent.ACTION_VIEW, uri));
-                } catch (Exception ignored) { }
+            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri uri=request.getUrl(); String host=uri.getHost();
+                if (host!=null && (host.equals(APP_HOST)||host.endsWith(".onrender.com"))) return false;
+                try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); } catch(Exception ignored) {}
                 return true;
             }
+            @Override public void onPageFinished(WebView view,String url) { super.onPageFinished(view,url); }
         });
-        if (savedInstanceState == null) webView.loadUrl(APP_URL);
-        else webView.restoreState(savedInstanceState);
+        if(savedInstanceState==null) webView.loadUrl("file:///android_asset/v2-shell.html"); else webView.restoreState(savedInstanceState);
+        webView.postDelayed(() -> { if(webView!=null) webView.loadUrl(APP_URL); }, 1800);
     }
-
-    @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        webView.saveState(outState);
-        super.onSaveInstanceState(outState);
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) webView.goBack();
-        else super.onBackPressed();
-    }
+    @Override protected void onSaveInstanceState(Bundle outState){webView.saveState(outState);super.onSaveInstanceState(outState);}
+    @Override public void onBackPressed(){if(webView!=null&&webView.canGoBack())webView.goBack();else super.onBackPressed();}
 }
