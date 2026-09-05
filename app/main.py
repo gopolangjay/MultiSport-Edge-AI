@@ -13,6 +13,7 @@ from app.optimizer import optimize_portfolio
 from app.providers.api_sports import APISportsProvider
 from app.web_intelligence import fallback_status
 from app.web_pipeline import build_web_portfolio, qualify_records
+from app.web_scan import ingest as ingest_web_records, snapshot as web_scan_snapshot
 
 BASE_DIR = Path(__file__).resolve().parent
 SAST = ZoneInfo("Africa/Johannesburg")
@@ -47,6 +48,14 @@ async def api_sports_status() -> dict:
 @app.get("/v1/providers/web-intelligence/status")
 def web_intelligence_status() -> dict:
     return fallback_status()
+
+@app.post("/v1/web-intelligence/ingest")
+def web_intelligence_ingest(batch: WebBatch) -> dict:
+    return ingest_web_records(batch.records)
+
+@app.get("/v1/web-intelligence/scan")
+def web_intelligence_scan() -> dict:
+    return web_scan_snapshot()
 
 @app.post("/v1/web-intelligence/qualify")
 def web_intelligence_qualify(batch: WebBatch) -> dict:
