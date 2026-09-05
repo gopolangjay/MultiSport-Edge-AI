@@ -1,14 +1,143 @@
-let state={events:[],scan:null,status:null,sport:'All'},running:false;
-const $=id=>document.getElementById(id);
-const esc=s=>String(s??'').replace(/[&<>'\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','\"':'&quot;'}[c]));
-async function request(url,opts={}){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),12000);try{const r=await fetch(url,{cache:'no-store',signal:controller.signal,...opts});let d;try{d=await r.json()}catch{throw new Error(`Invalid backend response (${r.status})`)}if(!r.ok)throw new Error(d.detail||`Backend ${r.status}`);return d}finally{clearTimeout(timer)}}
-function showView(name){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.dataset.page===name));document.querySelectorAll('.appNav a').forEach(a=>a.classList.toggle('active',a.dataset.view===name));const titles={dashboard:'Edge Command Center',scanner:'Live Scanner',multi:"Today's Multi",results:'Results',analytics:'Analytics'};$('pageTitle').textContent=titles[name]||'MultiSport Edge AI';window.scrollTo({top:0,behavior:'smooth'})}
-document.querySelectorAll('.appNav a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();showView(a.dataset.view)}));
-function stages(scan){const n=scan?.portfolio?.status==='QUALIFIED_PORTFOLIO'?5:scan?.qualified_records?4:scan?.observed_records?2:1;document.querySelectorAll('#scanStages span').forEach((x,i)=>x.classList.toggle('active',i<n))}
-function eventRow(x){const score=x.home_score!=null&&x.away_score!=null?`${x.home_score} – ${x.away_score}`:(x.status||x.time||'Scheduled');return `<div class="fixture"><div><b>${esc(x.event)}</b><span>${esc(x.sport)} · ${esc(x.league)}${x.venue?' · '+esc(x.venue):''}</span></div><time>${esc(score)}</time></div>`}
-function renderEvents(){const sports=['All',...new Set(state.events.map(x=>x.sport).filter(Boolean))];$('sportFilters').innerHTML=sports.map(s=>`<button class="${state.sport===s?'active':''}" data-sport="${esc(s)}">${esc(s)}</button>`).join('');$('sportFilters').querySelectorAll('button').forEach(b=>b.onclick=()=>{state.sport=b.dataset.sport;renderEvents()});const rows=state.sport==='All'?state.events:state.events.filter(x=>x.sport===state.sport);$('fixtureCount').textContent=`${rows.length} events`;$('fixtures').className=rows.length?'':'empty';$('fixtures').innerHTML=rows.length?rows.map(eventRow).join(''):'No verified events returned for this filter.';const finished=state.events.filter(x=>x.home_score!=null&&x.away_score!=null);$('resultCount').textContent=`${finished.length} scored`;$('resultsBox').className=finished.length?'':'empty';$('resultsBox').innerHTML=finished.length?finished.map(eventRow).join(''):'No completed/scored events are present in today’s provider response yet.'}
-function renderScan(scan){state.scan=scan;stages(scan);$('overviewOdds').textContent=scan.observed_records??0;$('overviewQualified').textContent=scan.qualified_records??0;const p=scan.portfolio||{};$('overviewPortfolio').textContent=p.status==='QUALIFIED_PORTFOLIO'?'Ready':'None';$('legs').textContent=p.selected_count||0;$('odds').textContent=p.combined_odds||'—';$('confidence').textContent='≥90';if(p.status==='QUALIFIED_PORTFOLIO'){$('portfolioBox').className='';$('portfolioBox').innerHTML=(p.legs||[]).map(x=>`<div class="fixture"><div><b>${esc(x.selection)}</b><span>${esc(x.event)} · ${esc(x.market)} · ${esc(x.bookmaker)} · ${Number(x.analytical_confidence).toFixed(1)}%</span></div><time>${Number(x.odds).toFixed(2)}</time></div>`).join('');$('multiStatus').textContent="Today's portfolio is ready";$('multiReason').textContent=`${p.selected_count} qualified legs · combined odds ${p.combined_odds}.`;}else{$('portfolioBox').className='empty';$('portfolioBox').textContent=p.reason||'No selections currently pass the full qualification and portfolio rules.';$('multiStatus').textContent=scan.observed_records?'Odds collected — qualification pending':'Bookmaker odds feed degraded';$('multiReason').textContent=scan.observed_records?`${scan.observed_records} bookmaker observations are stored; ${scan.qualified_records} pass ≥90.`:'Fixtures can still load independently; verified bookmaker odds are not currently available.'}}
-function renderStatus(s){state.status=s;const dot=$('providerDot');dot.className=s.ok?'ok':'bad';$('providerText').textContent=s.degraded?'Events live · odds feed degraded':'Pipeline live';$('lastUpdated').textContent=new Date(s.time_sast).toLocaleTimeString();const steps=[['Events',s.events_provider?.ok,`${s.events_provider?.events||0} verified`],['Bookmaker odds',(s.bookmaker_collector?.observations||0)>0,`${s.bookmaker_collector?.observations||0} stored`],['Evidence',(s.model_gate?.qualified||0)>0,`${s.model_gate?.qualified||0} qualified`],['≥90 gate',(s.model_gate?.qualified||0)>0,'threshold 90'],['Portfolio',s.portfolio?.status==='QUALIFIED_PORTFOLIO',s.portfolio?.status||'none'],['Settlement',false,'awaiting predictions']];$('healthStages').innerHTML=steps.map(([n,ok,d])=>`<div class="health ${ok?'ok':'warn'}"><i></i><div><b>${esc(n)}</b><span>${esc(d)}</span></div></div>`).join('');$('qualityBox').innerHTML=s.degraded?`<b>Current blocker:</b> ${esc(s.degraded_reason)}<br><br>The system is intentionally refusing to manufacture odds or ≥90 scores.`:'All upstream market stages are supplying data.'}
-async function refresh(full=false){if(state.running)return;state.running=true;const btn=$('scanBtn');btn.disabled=true;btn.textContent='Refreshing…';$('providerText').textContent=full?'Collecting markets…':'Loading live data…';try{let collector=null;if(full){try{collector=await request('/v1/market-collector/run',{method:'POST'})}catch(e){$('qualityBox').textContent=`Market collector unavailable: ${e.name==='AbortError'?'timed out':e.message}`}}
-const results=await Promise.allSettled([request('/v1/events/today'),request('/v1/system/status'),collector?Promise.resolve(collector.scan):request('/v1/web-intelligence/scan')]);const [ev,st,sc]=results;if(ev.status==='fulfilled'){state.events=ev.value.events||[];$('overviewEvents').textContent=ev.value.count||0;renderEvents()}else{$('overviewEvents').textContent='!';$('fixtures').textContent='Fixture provider unavailable or timed out.'}if(st.status==='fulfilled')renderStatus(st.value);else{$('providerDot').className='bad';$('providerText').textContent='Status provider unavailable'}if(sc.status==='fulfilled')renderScan(sc.value);else{$('overviewOdds').textContent='!';$('overviewQualified').textContent='!';$('multiStatus').textContent='Scanner unavailable'}if(results.some(x=>x.status==='fulfilled'))$('lastUpdated').textContent=new Date().toLocaleTimeString();}catch(e){$('providerDot').className='bad';$('providerText').textContent='Pipeline error';$('qualityBox').textContent=e.name==='AbortError'?'Request timed out. Other panels will keep working.':e.message}finally{state.running=false;btn.disabled=false;btn.textContent='Run full refresh'}}
-$('scanBtn').addEventListener('click',()=>refresh(true));refresh(false);setInterval(()=>refresh(false),120000);
+const byId = (id) => document.getElementById(id);
+let appState = { events: [], scan: null, status: null, sport: "All", running: false };
+
+function text(id, value) {
+  const el = byId(id);
+  if (el) el.textContent = value;
+}
+
+function escapeHtml(value) {
+  const div = document.createElement("div");
+  div.textContent = value == null ? "" : String(value);
+  return div.innerHTML;
+}
+
+async function api(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url, Object.assign({ cache: "no-store", signal: controller.signal }, options || {}));
+    const body = await response.text();
+    let data;
+    try { data = JSON.parse(body); } catch (_) { throw new Error(url + " returned invalid JSON (" + response.status + ")"); }
+    if (!response.ok) throw new Error((data && data.detail) || url + " returned " + response.status);
+    return data;
+  } catch (error) {
+    if (error && error.name === "AbortError") throw new Error(url + " timed out after 10s");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function showView(name) {
+  document.querySelectorAll(".view").forEach((el) => el.classList.toggle("active", el.dataset.page === name));
+  document.querySelectorAll(".appNav a").forEach((el) => el.classList.toggle("active", el.dataset.view === name));
+  const titles = { dashboard: "Edge Command Center", scanner: "Live Scanner", multi: "Today's Multi", results: "Results", analytics: "Analytics" };
+  text("pageTitle", titles[name] || "MultiSport Edge AI");
+  window.scrollTo(0, 0);
+}
+
+document.querySelectorAll(".appNav a").forEach((el) => {
+  el.addEventListener("click", (event) => { event.preventDefault(); showView(el.dataset.view); });
+});
+
+function eventHtml(event) {
+  const score = event.home_score != null && event.away_score != null
+    ? event.home_score + " – " + event.away_score
+    : (event.status || event.time || "Scheduled");
+  return '<div class="fixture"><div><b>' + escapeHtml(event.event) + '</b><span>' + escapeHtml(event.sport) + ' · ' + escapeHtml(event.league || "") + '</span></div><time>' + escapeHtml(score) + '</time></div>';
+}
+
+function renderEvents(data) {
+  appState.events = data.events || [];
+  text("overviewEvents", data.count || 0);
+  text("fixtureCount", appState.events.length + " events");
+  const fixtures = byId("fixtures");
+  if (fixtures) {
+    fixtures.className = appState.events.length ? "" : "empty";
+    fixtures.innerHTML = appState.events.length ? appState.events.map(eventHtml).join("") : "No verified events returned today.";
+  }
+  const finished = appState.events.filter((x) => x.home_score != null && x.away_score != null);
+  text("resultCount", finished.length + " scored");
+  const results = byId("resultsBox");
+  if (results) {
+    results.className = finished.length ? "" : "empty";
+    results.innerHTML = finished.length ? finished.map(eventHtml).join("") : "No completed/scored events returned yet.";
+  }
+}
+
+function renderScan(scan) {
+  appState.scan = scan;
+  const observed = Number(scan.observed_records || 0);
+  const qualified = Number(scan.qualified_records || 0);
+  const portfolio = scan.portfolio || {};
+  text("overviewOdds", observed);
+  text("overviewQualified", qualified);
+  text("overviewPortfolio", portfolio.status === "QUALIFIED_PORTFOLIO" ? "Ready" : "None");
+  text("legs", portfolio.selected_count || 0);
+  text("odds", portfolio.combined_odds || "—");
+  text("confidence", "≥90");
+  if (portfolio.status === "QUALIFIED_PORTFOLIO") {
+    text("multiStatus", "Today's portfolio is ready");
+    text("multiReason", (portfolio.selected_count || 0) + " qualified legs · combined odds " + portfolio.combined_odds);
+  } else {
+    text("multiStatus", observed ? "Odds collected — qualification pending" : "Bookmaker odds feed degraded");
+    text("multiReason", observed ? observed + " bookmaker observations; " + qualified + " pass ≥90." : "Fixtures can operate independently; verified bookmaker odds are currently unavailable.");
+  }
+}
+
+function renderStatus(status) {
+  appState.status = status;
+  const dot = byId("providerDot");
+  if (dot) dot.className = status.ok ? "ok" : "bad";
+  text("providerText", status.degraded ? "Events live · odds feed degraded" : "Pipeline live");
+  if (status.time_sast) text("lastUpdated", new Date(status.time_sast).toLocaleTimeString());
+  text("qualityBox", status.degraded ? (status.degraded_reason || "A pipeline component is degraded.") : "All upstream market stages are supplying data.");
+}
+
+function showBootError(message) {
+  const dot = byId("providerDot");
+  if (dot) dot.className = "bad";
+  text("providerText", "System check failed");
+  text("multiStatus", "Dashboard connected · provider check failed");
+  text("multiReason", message);
+  text("qualityBox", message);
+}
+
+async function refresh(full) {
+  if (appState.running) return;
+  appState.running = true;
+  const button = byId("scanBtn");
+  if (button) { button.disabled = true; button.textContent = "Refreshing…"; }
+  text("providerText", "Checking system…");
+  try {
+    if (full) {
+      try { await api("/v1/market-collector/run", { method: "POST" }); } catch (error) { console.warn("Collector:", error); }
+    }
+    const settled = await Promise.allSettled([
+      api("/v1/web-intelligence/scan"),
+      api("/v1/events/today"),
+      api("/v1/system/status")
+    ]);
+    let successes = 0;
+    if (settled[0].status === "fulfilled") { renderScan(settled[0].value); successes += 1; }
+    if (settled[1].status === "fulfilled") { renderEvents(settled[1].value); successes += 1; }
+    if (settled[2].status === "fulfilled") { renderStatus(settled[2].value); successes += 1; }
+    if (!successes) throw new Error(settled.map((x) => x.status === "rejected" ? x.reason.message : "").filter(Boolean).join(" · "));
+    if (!appState.status) text("providerText", successes + "/3 services responding");
+  } catch (error) {
+    showBootError(error && error.message ? error.message : "Unknown startup error");
+  } finally {
+    appState.running = false;
+    if (button) { button.disabled = false; button.textContent = "Run full refresh"; }
+  }
+}
+
+window.addEventListener("error", (event) => showBootError("UI error: " + event.message));
+window.addEventListener("unhandledrejection", (event) => showBootError("Request error: " + (event.reason && event.reason.message ? event.reason.message : event.reason)));
+const scanButton = byId("scanBtn");
+if (scanButton) scanButton.addEventListener("click", () => refresh(true));
+text("providerText", "Connecting…");
+refresh(false);
+setInterval(() => refresh(false), 120000);
