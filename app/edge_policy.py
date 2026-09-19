@@ -6,7 +6,6 @@ at least two independent evidence groups are present in addition to bookmaker od
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from math import prod
 from urllib.parse import urlparse
 
