@@ -1,3 +1,5 @@
+import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -7,8 +9,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
-from app import __version__
+from app import __version__, private_store
 from app.daily_reports import router as reports_router
 from app.domain import Portfolio, PortfolioRequest
 from app.market_collector import collect_public_markets
@@ -29,6 +32,15 @@ BASE_DIR = Path(__file__).resolve().parent
 SAST = ZoneInfo("Africa/Johannesburg")
 @asynccontextmanager
 async def lifespan(_app):
+    # Log categories only, never exception messages (they may contain DSNs/secrets).
+    if not os.getenv("DATABASE_URL", "").strip():
+        logging.error("PRIVATE_STORAGE_NOT_CONFIGURED: DATABASE_URL is missing")
+    else:
+        try:
+            await run_in_threadpool(private_store.engine)
+            logging.info("PRIVATE_STORAGE_READY: private database schema verified")
+        except Exception as exc:
+            logging.error("PRIVATE_STORAGE_UNAVAILABLE: %s", type(exc).__name__)
     async with mcp.session_manager.run():
         yield
 
