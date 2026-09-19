@@ -1,4 +1,43 @@
-from app.edge_policy import daily_funnel, optimize_safest, qualification_state
+import pytest
+
+from app.edge_policy import daily_funnel, evidence_group, optimize_safest, qualification_state
+
+
+@pytest.mark.parametrize("url", [
+    "https://sofascore.com.attacker.example/match/1",
+    "https://fakeflashscore.co.za/match/1",
+    "http://www.sofascore.com/match/1",
+    "https://user@www.sofascore.com/match/1",
+    "https://[broken",
+])
+def test_untrusted_evidence_url(url):
+    assert evidence_group(url) is None
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), 101, "invalid", None])
+def test_invalid_scores_never_qualify(score):
+    assert qualification_state(candidate(analytical_confidence=score))[0] == "BELOW_THRESHOLD"
+
+
+@pytest.mark.parametrize("odds", [float("nan"), float("inf"), -1, 1, "invalid", None])
+def test_invalid_odds_never_qualify(odds):
+    assert qualification_state(candidate(odds=odds))[0] == "ODDS_PENDING"
+
+
+def test_other_bookmaker_is_not_independent_research():
+    row = candidate(evidence_sources=[
+        "https://www.sportingbet.co.za/event/1",
+        "https://www.sofascore.com/game/1",
+    ])
+    assert qualification_state(row)[0] == "EVIDENCE_PENDING"
+
+
+def test_source_must_match_bookmaker():
+    assert qualification_state(candidate(source_url="https://www.sofascore.com"))[0] == "ODDS_PENDING"
+
+
+def test_missing_evidence_is_safe():
+    assert qualification_state(candidate(evidence_sources=None))[0] == "EVIDENCE_PENDING"
 
 
 def candidate(**overrides):
