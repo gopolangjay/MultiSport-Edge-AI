@@ -1,6 +1,15 @@
 from pathlib import Path
 
 
+def test_android_uses_server_authentication_without_anonymous_bridge():
+    java = Path("android/app/src/main/java/za/co/multisportedge/MainActivity.java").read_text()
+    assert 'webView.loadUrl(APP_ORIGIN + "/")' in java
+    assert "addJavascriptInterface" not in java
+    assert "setAllowFileAccess(false)" in java
+    assert "setAcceptThirdPartyCookies(webView, false)" in java
+    assert "LOAD_NO_CACHE" in java
+
+
 def test_android_live_ui_uses_required_endpoints_and_backend_schema():
     html = Path("android/app/src/main/assets/v2-shell.html").read_text(encoding="utf-8")
     for path in ("/health", "/v1/events/today", "/v1/system/status", "/v1/web-intelligence/scan"):

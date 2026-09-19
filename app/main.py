@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -8,10 +9,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app import __version__
+from app.daily_reports import router as reports_router
 from app.domain import Portfolio, PortfolioRequest
 from app.market_collector import collect_public_markets
 from app.optimizer import optimize_portfolio
+from app.private_auth import PrivateAccessMiddleware
+from app.private_auth import router as auth_router
 from app.providers.api_sports import APISportsProvider
+from app.report_bridge import bridge_app, mcp
+from app.report_bridge import router as bridge_router
 from app.research_worker import prepare_batch
 from app.sports_data import events_for_day
 from app.web_intelligence import fallback_status
@@ -21,8 +27,18 @@ from app.web_scan import snapshot as web_scan_snapshot
 
 BASE_DIR = Path(__file__).resolve().parent
 SAST = ZoneInfo("Africa/Johannesburg")
-app = FastAPI(title="MultiSport Edge AI", version=__version__)
+@asynccontextmanager
+async def lifespan(_app):
+    async with mcp.session_manager.run():
+        yield
+
+
+app = FastAPI(title="MultiSport Edge AI", version=__version__, lifespan=lifespan)
+app.add_middleware(PrivateAccessMiddleware)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+app.include_router(auth_router)
+app.include_router(bridge_router)
+app.include_router(reports_router)
 
 
 class WebBatch(BaseModel):
@@ -43,14 +59,11 @@ def dashboard() -> HTMLResponse:
 
 @app.get("/health")
 def health() -> dict:
-    scan = web_scan_snapshot()
     return {
         "status": "ok",
         "version": __version__,
         "service": "multisport-edge-ai",
-        "time_sast": datetime.now(SAST).isoformat(),
-        "stored_observations": scan["observed_records"],
-        "qualified": scan["qualified_records"],
+        "private_access": True,
     }
 
 
@@ -166,11 +179,6 @@ async def market_collector_run() -> dict:
     return await _collector_response()
 
 
-@app.get("/v1/market-collector/run")
-async def market_collector_run_get() -> dict:
-    return await _collector_response()
-
-
 @app.post("/v1/web-intelligence/ingest")
 def web_intelligence_ingest(batch: WebBatch) -> dict:
     return ingest_web_records(batch.records)
@@ -234,3 +242,7 @@ async def football_predictions(fixture_id: int) -> dict:
 @app.post("/v1/portfolios/build", response_model=Portfolio)
 def create_portfolio(request: PortfolioRequest) -> Portfolio:
     return optimize_portfolio(request)
+
+
+# Last mount: exact SDK OAuth and /mcp routes, with its own bearer-token middleware.
+app.mount("/", bridge_app)
