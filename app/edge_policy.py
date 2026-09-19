@@ -6,7 +6,7 @@ at least two independent evidence groups are present in addition to bookmaker od
 """
 from __future__ import annotations
 
-from math import prod
+from math import isfinite, prod
 from urllib.parse import urlparse
 
 MIN_SCORE = 90.0
@@ -17,10 +17,10 @@ TARGET_FLOOR = 1.55
 TARGET_CEILING = 1.60
 
 TRUSTED_GROUPS = {
-    "flashscore": ("flashscore.",),
+    "flashscore": ("flashscore.com", "flashscore.co.za"),
     "sofascore": ("sofascore.com",),
-    "betway": ("betway.",),
-    "sportingbet": ("sportingbet.",),
+    "betway": ("betway.co.za",),
+    "sportingbet": ("sportingbet.co.za",),
 }
 
 MARKET_REGISTRY = {
@@ -45,9 +45,15 @@ MARKET_REGISTRY = {
 
 
 def evidence_group(url: str) -> str | None:
-    host = (urlparse(url).hostname or "").lower()
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or parsed.username or parsed.password:
+            return None
+    except ValueError:
+        return None
     for group, needles in TRUSTED_GROUPS.items():
-        if any(needle in host for needle in needles):
+        if any(host == needle or host.endswith("." + needle) for needle in needles):
             return group
     return None
 
@@ -69,19 +75,34 @@ def market_family(sport: str, market: str) -> str | None:
 
 
 def qualification_state(raw: dict) -> tuple[str, str | None]:
-    if not raw.get("odds") or not raw.get("source_url"):
+    try:
+        odds = float(raw.get("odds"))
+    except (TypeError, ValueError, OverflowError):
+        odds = float("nan")
+    bookmaker = str(raw.get("bookmaker", "")).strip().lower()
+    if (
+        not isfinite(odds) or not 1 < odds <= 1000
+        or bookmaker not in {"betway", "sportingbet"}
+        or evidence_group(str(raw.get("source_url", ""))) != bookmaker
+    ):
         return "ODDS_PENDING", "Verified bookmaker odds are required."
     family = market_family(str(raw.get("sport", "")), str(raw.get("market", "")))
     if family is None:
         return "MODEL_PENDING", "No approved sport/market model is registered."
-    groups = independent_groups(tuple(str(x) for x in raw.get("evidence_sources", []) if x))
-    independent = groups - {str(raw.get("bookmaker", "")).lower()}
+    sources = raw.get("evidence_sources")
+    if not isinstance(sources, (list, tuple)):
+        sources = []
+    groups = independent_groups(tuple(str(x) for x in sources if x))
+    independent = groups - {"betway", "sportingbet"}
     if len(independent) < 2:
         return "EVIDENCE_PENDING", "Two independent trusted evidence groups are required."
     if raw.get("model_validated") is not True or not raw.get("model_id") or not raw.get("model_version"):
         return "MODEL_PENDING", "A server-side validated sport/market model output is required."
-    score = raw.get("analytical_confidence")
-    if score is None or float(score) < MIN_SCORE:
+    try:
+        score = float(raw.get("analytical_confidence"))
+    except (TypeError, ValueError, OverflowError):
+        score = float("nan")
+    if not isfinite(score) or not MIN_SCORE <= score <= 100:
         return "BELOW_THRESHOLD", f"Analytical score must be at least {MIN_SCORE:.0f}."
     return "QUALIFIED", None
 
