@@ -1,10 +1,31 @@
+import secrets
+import time
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app import private_store
 from app.main import app
+from app.private_auth import COOKIE, ORIGIN, digest
 
-client = TestClient(app)
+client = TestClient(app, base_url=ORIGIN)
+
+
+@pytest.fixture(autouse=True)
+def owner_session(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///" + str(tmp_path / "api.db"))
+    monkeypatch.setenv("EDGE_TEST_SQLITE", "1")
+    monkeypatch.delenv("RENDER", raising=False)
+    token = secrets.token_urlsafe(32)
+    private_store.create(
+        "session:" + digest(token), {"csrf": "local-test-csrf"}, int(time.time()) + 600
+    )
+    client.cookies.set(COOKIE, token)
+    client.headers.update({"Origin": ORIGIN, "X-Edge-CSRF": "local-test-csrf"})
+    yield
+    client.cookies.clear()
+    private_store._engine_for.cache_clear()
 
 
 def _events_payload():
@@ -35,7 +56,8 @@ def test_health_endpoint():
     body = response.json()
     assert body["status"] == "ok"
     assert body["service"] == "multisport-edge-ai"
-    assert body["stored_observations"] == 0
+    assert body["private_access"] is True
+    assert "stored_observations" not in body
 
 
 def test_events_today_endpoint():
@@ -80,7 +102,7 @@ def test_market_collector_endpoint():
         patch("app.main.web_scan_snapshot", return_value=_scan_payload()),
         patch("app.main.events_for_day", new=AsyncMock(return_value=_events_payload())),
     ):
-        response = client.get("/v1/market-collector/run")
+        response = client.post("/v1/market-collector/run")
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
